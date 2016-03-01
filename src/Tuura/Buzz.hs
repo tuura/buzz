@@ -1,6 +1,7 @@
 {-# LANGUAGE RecordWildCards, DeriveFunctor #-}
 module Tuura.Buzz where
 
+import Control.Monad
 import Data.List.Extra
 import Data.Ord
 
@@ -36,9 +37,20 @@ toClock = fmap $ const ()
 sampleWith :: Clock -> Signal a -> Event a
 sampleWith Event {..} Signal {..} = Event [ (t, sample t) | (t, _) <- stream ]
 
+delay :: Time -> Event a -> Event a
+delay period Event {..} = Event [ (t + period, a) | (t, a) <- stream ]
+
 instance Monoid (Event a) where
     mempty      = never
     mappend x y = Event $ mergeBy (comparing fst) (stream x) (stream y)
+
+instance Applicative Event where
+    pure a = event 0 a
+    (<*>)  = ap
+
+instance Monad Event where
+    return           = pure
+    Event {..} >>= f = mconcat $ map (\(t, e) -> delay t $ f e) stream
 
 latch :: a -> Event a -> Signal a
 latch initial (Event [])                        = pure initial

@@ -3,7 +3,6 @@ module Tuura.Buzz where
 
 import Data.List.Extra
 import Data.Ord
-import Data.Monoid
 
 type Time = Double
 
@@ -20,11 +19,22 @@ time = Signal id
 newtype Event a = Event { stream :: [(Time, a)] }
     deriving (Show, Functor)
 
+type Clock = Event ()
+
 never :: Event a
 never = Event []
 
 event :: Time -> a -> Event a
 event t a = Event [(t, a)]
+
+clock :: Time -> Clock
+clock period = Event [ (k * period, ()) | k <- [0..] ]
+
+toClock :: Event a -> Clock
+toClock = fmap $ const ()
+
+sampleWith :: Clock -> Signal a -> Event a
+sampleWith Event {..} Signal {..} = Event [ (t, sample t) | (t, _) <- stream ]
 
 instance Monoid (Event a) where
     mempty      = never
@@ -35,5 +45,4 @@ latch initial (Event [])                        = pure initial
 latch initial (Event ((first, value) : future)) = Signal $ \t ->
     if t < first then initial else sample (latch value (Event future)) t
 
-clock :: Time -> Event ()
-clock period = Event [ (k * period, ()) | k <- [0..] ]
+-- TODO: slowdown signals/events (linear, exponential, hyperbolic)?

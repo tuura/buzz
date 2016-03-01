@@ -45,11 +45,11 @@ instance Monoid (Event a) where
     mappend x y = Event $ mergeBy (comparing fst) (stream x) (stream y)
 
 instance Applicative Event where
-    pure a = event 0 a
-    (<*>)  = ap
+    pure  = return
+    (<*>) = ap
 
 instance Monad Event where
-    return           = pure
+    return           = event 0
     Event {..} >>= f = mconcat $ map (\(t, e) -> delay t $ f e) stream
 
 latch :: a -> Event a -> Signal a

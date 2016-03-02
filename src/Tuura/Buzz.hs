@@ -1,6 +1,7 @@
-{-# LANGUAGE RecordWildCards, DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor #-}
 module Tuura.Buzz (
     Time, Signal, Event, Clock, time, signal, never, once, onceAt, buzz, clock,
+    previous, next, lookahead, values, times, generate,
     dropRepetitions, sampleWith, delay, synchronise, latch
     ) where
 
@@ -55,7 +56,7 @@ clock :: Time -> Clock
 clock period = Event [ (k * period, ()) | k <- [0..] ]
 
 sampleWith :: Clock -> Signal a -> Event a
-sampleWith e s = Event [ (t, sample s t) | (t, _) <- stream e ]
+sampleWith c s = Event [ (t, sample s t) | (t, _) <- stream c ]
 
 delay :: Time -> Event a -> Event a
 delay delta e = Event [ (t + delta, a) | (t, a) <- stream e ]
@@ -72,6 +73,9 @@ lookahead n e = Event . zip (times e) . map (Event . take n) . tails $ stream e
 previous :: Event a -> Event (Maybe a)
 previous e = Event $ (0, Nothing) : stream (fmap Just e)
 
+next :: Event a -> Event a
+next = Event . drop 1 . stream
+
 dropRepetitions :: Eq a => Event a -> Event a
 dropRepetitions e = do
     (prev, cur) <- synchronise (previous e) e
@@ -83,21 +87,6 @@ instance Foldable Event where
 instance Monoid (Event a) where
     mempty      = Event []
     mappend x y = Event $ mergeBy (comparing fst) (stream x) (stream y)
-    mconcat     = Event . monotonicMerge . map stream
-
-monotonicMerge :: [[(Time, a)]] -> [(Time, a)]
-monotonicMerge []               = []
-monotonicMerge ([]:rest)        = monotonicMerge rest
-monotonicMerge xs@(((t,_):_):_) = concat equal ++ monotonicMerge notEqual
-  where
-    (equal, notEqual) = collect xs
-    collect []        = ([], [])
-    collect ([]:rest) = collect rest
-    collect (first@((t1,_):_):rest)
-        | t == t1 = let (s , r ) = collect rest
-                        (s', r') = span ((== t) . fst) first
-                    in (s' : s, r' : r)
-        | otherwise = ([], rest)
 
 instance Applicative Event where
     pure  = return
@@ -113,3 +102,13 @@ latch initial (Event ((first, value) : future)) = Signal $ \t ->
     if t < first then initial else sample (latch value (Event future)) t
 
 -- TODO: slowdown signals/events (linear, exponential, hyperbolic)?
+
+type Frequency = Double
+type Voltage   = Double
+
+-- Design specific mapping
+type DVFS = Voltage -> Frequency
+
+-- Adapt clock frequency to the current voltage
+adaptiveClock :: DVFS -> Event Voltage -> Clock
+adaptiveClock = undefined

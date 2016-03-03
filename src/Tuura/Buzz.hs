@@ -2,7 +2,7 @@
 module Tuura.Buzz (
     Time, Signal, Event, Clock, time, signal, never, once, onceAt, buzz, clock,
     previous, next, lookahead, values, times, generate,
-    dropRepetitions, sampleWith, delay, synchronise, latch
+    dropRepetitions, detectRepetitions, sampler, delay, synchronise, latch
     ) where
 
 import Control.Monad
@@ -55,8 +55,8 @@ buzz e = void $ traverse putStrLn
 clock :: Time -> Clock
 clock period = Event [ (k * period, ()) | k <- [0..] ]
 
-sampleWith :: Clock -> Signal a -> Event a
-sampleWith c s = Event [ (t, sample s t) | (t, _) <- stream c ]
+sampler :: Clock -> Signal a -> Event a
+sampler c s = Event [ (t, sample s t) | (t, _) <- stream c ]
 
 delay :: Time -> Event a -> Event a
 delay delta e = Event [ (t + delta, a) | (t, a) <- stream e ]
@@ -81,8 +81,15 @@ dropRepetitions e = do
     (prev, cur) <- synchronise (previous e) e
     if prev == Just cur then never else once cur
 
+-- dropRepetitions represents waste of energy at the event source.
+-- Consider sending a clock-like feedback to the source about dropped values.
+detectRepetitions :: Eq a => Event a -> Clock
+detectRepetitions e = do
+    (prev, cur) <- synchronise (previous e) e
+    if prev == Just cur then once () else never
+
 instance Foldable Event where
-    foldr f z e = foldr f z . map snd $ stream e
+    foldr f z = foldr (f . snd) z . stream
 
 instance Monoid (Event a) where
     mempty      = Event []
@@ -96,6 +103,7 @@ instance Monad Event where
     return  = once
     e >>= f = mconcat [ delay t $ f a | (t, a) <- stream e ]
 
+-- TODO: simplify
 latch :: a -> Event a -> Signal a
 latch initial (Event [])                        = pure initial
 latch initial (Event ((first, value) : future)) = Signal $ \t ->
@@ -109,6 +117,7 @@ type Voltage   = Double
 -- Design specific mapping
 type DVFS = Voltage -> Frequency
 
+-- TODO: implement adaptiveClock
 -- Adapt clock frequency to the current voltage
 adaptiveClock :: DVFS -> Event Voltage -> Clock
 adaptiveClock = undefined

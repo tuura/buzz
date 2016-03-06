@@ -1,7 +1,7 @@
-{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor, FlexibleInstances #-}
 module Tuura.Buzz (
-    Time, Signal, Event, Clock, time, signal, never, once, onceAt, buzz, clock,
-    previous, next, lookahead, values, times, generate,
+    Time, Signal, Event, Clock, time, signal, never, once, onceAt, tick, clock,
+    buzz, previous, next, lookahead, generate,
     dropRepetitions, detectRepetitions, sampler, delay, synchronise, latch
     ) where
 
@@ -25,91 +25,96 @@ time = Signal id
 signal :: (Time -> a) -> Signal a
 signal = Signal
 
-newtype Event a = Event { stream :: [(Time, a)] }
-    deriving (Show, Functor)
+data Event a = Event { timestamp :: Time, value :: a }
+    deriving Functor
 
-type Clock = Event ()
+newtype Stream a = Stream { stream :: [Event a] }
+    deriving Functor
 
-onceAt :: Time -> a -> Event a
-onceAt t a = Event [(t, a)]
+type Tick  = Event ()
+type Clock = Stream ()
 
-never :: Event a
-never = Event []
+never :: Stream a
+never = Stream []
 
-once :: a -> Event a
+onceAt :: Time -> a -> Stream a
+onceAt t = Stream . return . Event t
+
+once :: a -> Stream a
 once = onceAt 0
 
-generate :: [a] -> Event a
-generate = Event . zip [0..]
+tick :: Time -> Tick
+tick t = Event t ()
 
-times :: Event a -> [Time]
-times = map fst . stream
+generate :: [a] -> Stream a
+generate = Stream . zipWith Event [0..]
 
-values :: Event a -> [a]
-values = map snd . stream
-
-buzz :: Show a => Event a -> IO ()
+buzz :: Show a => Stream a -> IO ()
 buzz e = void $ traverse putStrLn
-    [ showFFloatAlt (Just 2) t ": " ++ show a | (t, a) <- take 10 $ stream e ]
+    [ showFFloatAlt (Just 2) t ": " ++ show a | Event t a <- take 10 $ stream e ]
 
 clock :: Time -> Clock
-clock period = Event [ (k * period, ()) | k <- [0..] ]
+clock period = linearTimeScale period . Stream $ map tick [0..]
 
-sampler :: Clock -> Signal a -> Event a
-sampler c s = Event [ (t, sample s t) | (t, _) <- stream c ]
+sampler :: Clock -> Signal a -> Stream a
+sampler c s = Stream [ Event t (sample s t) | Event t _ <- stream c ]
 
-delay :: Time -> Event a -> Event a
-delay delta e = Event [ (t + delta, a) | (t, a) <- stream e ]
+delay :: Time -> Stream a -> Stream a
+delay delta = Stream . map (\(Event t a) -> Event (t + delta) a) . stream
 
-synchronise :: Event a -> Event b -> Event (a, b)
-synchronise ea eb = Event $ zipWith sync (stream ea) (stream eb)
-    where sync (ta, a) (tb, b) = (max ta tb, (a, b))
+-- TODO: add exponential/hyperbolic time scaling?
+linearTimeScale :: Time -> Stream a -> Stream a
+linearTimeScale k = Stream . map (\(Event t a) -> Event (t * k) a) . stream
+
+synchronise :: Stream a -> Stream b -> Stream (a, b)
+synchronise s1 s2 = Stream $ zipWith sync (stream s1) (stream s2)
+    where sync (Event ta a) (Event tb b) = Event (max ta tb) (a, b)
 
 -- TODO: bundle events
 
-lookahead :: Int -> Event a -> Event (Event a)
-lookahead n e = Event . zip (times e) . map (Event . take n) . tails $ stream e
+lookahead :: Int -> Stream a -> Stream (Stream a)
+lookahead n (Stream s) =
+    Stream . zipWith Event (map timestamp s) $ map (Stream . take n) $ tails s
 
-previous :: Event a -> Event (Maybe a)
-previous e = Event $ (0, Nothing) : stream (fmap Just e)
+previous :: Stream a -> Stream (Maybe a)
+previous s = Stream $ Event 0.0 Nothing : map (fmap Just) (stream s)
 
-next :: Event a -> Event a
-next = Event . drop 1 . stream
+next :: Stream a -> Stream a
+next = Stream . drop 1 . stream
 
-dropRepetitions :: Eq a => Event a -> Event a
-dropRepetitions e = do
-    (prev, cur) <- synchronise (previous e) e
+dropRepetitions :: Eq a => Stream a -> Stream a
+dropRepetitions s = do
+    (prev, cur) <- synchronise (previous s) s
     if prev == Just cur then never else once cur
 
 -- dropRepetitions represents waste of energy at the event source.
 -- Consider sending a clock-like feedback to the source about dropped values.
-detectRepetitions :: Eq a => Event a -> Clock
-detectRepetitions e = do
-    (prev, cur) <- synchronise (previous e) e
+detectRepetitions :: Eq a => Stream a -> Clock
+detectRepetitions s = do
+    (prev, cur) <- synchronise (previous s) s
     if prev == Just cur then once () else never
 
-instance Foldable Event where
-    foldr f z = foldr (f . snd) z . stream
+-- instance Foldable Stream where
+--     foldr f z = foldr (f . snd) z
 
-instance Monoid (Event a) where
-    mempty      = Event []
-    mappend x y = Event $ mergeBy (comparing fst) (stream x) (stream y)
+-- TODO: handle infinite streams efficiently
+instance Monoid (Stream a) where
+    mempty      = never
+    mappend x y = Stream $ mergeBy (comparing timestamp) (stream x) (stream y)
 
-instance Applicative Event where
+instance Applicative Stream where
     pure  = return
     (<*>) = ap
 
-instance Monad Event where
+instance Monad Stream where
     return  = once
-    e >>= f = mconcat [ delay t $ f a | (t, a) <- stream e ]
+    s >>= f = mconcat [ delay t (f a) | Event t a <- stream s ]
 
 -- TODO: simplify
-latch :: a -> Event a -> Signal a
-latch initial (Event [])                        = pure initial
-latch initial (Event ((first, value) : future)) = Signal $ \t ->
-    if t < first then initial else sample (latch value (Event future)) t
-
--- TODO: slowdown signals/events (linear, exponential, hyperbolic)?
+latch :: a -> Stream a -> Signal a
+latch initial (Stream [])                        = pure initial
+latch initial (Stream (Event first value : future)) = Signal $ \t ->
+    if t < first then initial else sample (latch value $ Stream future) t
 
 type Frequency = Double
 type Voltage   = Double

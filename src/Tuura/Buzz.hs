@@ -1,12 +1,13 @@
 {-# LANGUAGE DeriveFunctor, FlexibleInstances #-}
 module Tuura.Buzz (
     Time, Signal, Event, Clock, time, signal, never, once, onceAt, tick, clock,
-    buzz, previous, next, lookahead, generate,
+    buzz, previous, next, lookahead, generate, addClock, removeClock,
     dropRepetitions, detectRepetitions, sampler, delay, synchronise, latch
     ) where
 
 import Control.Monad
 import Data.List.Extra
+import Data.Monoid
 import Data.Ord
 import Numeric
 
@@ -61,6 +62,13 @@ sampler (Stream c) s = Stream [ Event t (sample s t) | Event t _ <- c ]
 
 delay :: Time -> Stream a -> Stream a
 delay delta = Stream . map (\(Event t a) -> Event (t + delta) a) . unstream
+
+-- TODO: Test that (addClock c) . removeClock == id
+addClock :: Clock -> Stream a -> Stream (Maybe a)
+addClock c s = fmap (const Nothing) c <> fmap Just s
+
+removeClock :: Stream (Maybe a) -> Stream a
+removeClock s = Stream [ Event t a | Event t (Just a) <- unstream s ]
 
 -- TODO: add exponential/hyperbolic time scaling?
 linearTimeScale :: Time -> Stream a -> Stream a

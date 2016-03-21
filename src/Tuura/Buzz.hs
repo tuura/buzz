@@ -63,11 +63,14 @@ sampler (Stream c) s = Stream [ Event t (sample s t) | Event t _ <- c ]
 delay :: Time -> Stream a -> Stream a
 delay delta = Stream . map (\(Event t a) -> Event (t + delta) a) . unstream
 
+-- Clocked streams
+type ClockedStream a = Stream (Maybe a)
+
 -- TODO: Test that (addClock c) . removeClock == id
-addClock :: Clock -> Stream a -> Stream (Maybe a)
+addClock :: Clock -> Stream a -> ClockedStream a
 addClock c s = fmap (const Nothing) c <> fmap Just s
 
-removeClock :: Stream (Maybe a) -> Stream a
+removeClock :: ClockedStream a -> Stream a
 removeClock s = Stream [ Event t a | Event t (Just a) <- unstream s ]
 
 -- TODO: add exponential/hyperbolic time scaling?
